@@ -39,6 +39,8 @@ const COLORS = {
     ROOM_BORDER: 0x2f2f2f,
 };
 
+const LEGEND_BOTTOM_OFFSET = 30;
+
 const BUILDING_COLORS: Record<BuildingType, number> = {
     spawn: 0xf4d35e,
     tower: 0x70d6ff,
@@ -263,7 +265,7 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
             // 添加图例
             const legendContainer = new PIXI.Container();
             legendContainer.x = 10;
-            legendContainer.y = Math.max(10, app.screen.height - 30);
+            legendContainer.y = Math.max(10, app.screen.height - LEGEND_BOTTOM_OFFSET);
 
             const legendItems = [
                 { color: COLORS.PLAIN, label: '平原' },
