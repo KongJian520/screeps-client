@@ -13,6 +13,9 @@ export async function getTerrainAction(roomName: string, shard: ScreepsShard) {
         const terrain = await fetchRoomTerrain(roomName, shard);
         return { success: true, data: terrain };
     } catch (error) {
-        return { success: false, error: (error as Error).message };
+        return { 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+        };
     }
 }
