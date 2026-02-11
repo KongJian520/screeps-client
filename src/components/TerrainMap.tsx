@@ -1,11 +1,28 @@
 'use client';
 
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
+import { ROOM_PX, ROOM_SIZE, TILE_SIZE, roomNameToXY } from '@/lib/mapUtils';
+
+export interface RoomTerrain {
+    roomName: string;
+    terrain: string;
+}
+
+export type BuildingType = 'spawn' | 'tower' | 'extension';
+
+export interface Building {
+    id: string;
+    type: BuildingType;
+    roomName: string;
+    x: number;
+    y: number;
+    hp?: number;
+}
 
 interface TerrainMapProps {
-    terrain: string;
-    roomName: string;
+    rooms: RoomTerrain[];
+    buildings: Building[];
 }
 
 // 地形类型常量
@@ -19,6 +36,19 @@ const COLORS = {
     SWAMP: 0x1a3a1a,      // 沼泽 - 深绿色
     GRID: 0x404040,       // 网格线
     BACKGROUND: 0x1a1a1a, // 背景色
+    ROOM_BORDER: 0x2f2f2f,
+};
+
+const BUILDING_COLORS: Record<BuildingType, number> = {
+    spawn: 0xf4d35e,
+    tower: 0x70d6ff,
+    extension: 0xf4978e,
+};
+
+const BUILDING_LABELS: Record<BuildingType, string> = {
+    spawn: 'Spawn',
+    tower: 'Tower',
+    extension: 'Extension',
 };
 
 /**
@@ -26,36 +56,74 @@ const COLORS = {
  * 使用 PixiJS 渲染 Screeps 地形数据
  * 使用 React 缓存机制优化性能
  */
-export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
+export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
     const canvasRef = useRef<HTMLDivElement>(null);
+    const wrapperRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<PIXI.Application | null>(null);
+    const resetViewRef = useRef<(() => void) | null>(null);
     const [scale, setScale] = useState(1);
     const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
+    const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
 
     // 使用 useMemo 缓存解析后的地形数据
-    const parsedTerrain = useMemo(() => {
-        console.log('解析地形数据...');
-        const terrainArray: number[][] = [];
-        for (let y = 0; y < 50; y++) {
-            terrainArray[y] = [];
-            for (let x = 0; x < 50; x++) {
-                const index = y * 50 + x;
-                terrainArray[y][x] = parseInt(terrain[index]) || 0;
+    const parsedRooms = useMemo(() => {
+        return rooms.map((room) => {
+            const terrainArray: number[][] = [];
+            for (let y = 0; y < ROOM_SIZE; y++) {
+                terrainArray[y] = [];
+                for (let x = 0; x < ROOM_SIZE; x++) {
+                    const index = y * ROOM_SIZE + x;
+                    terrainArray[y][x] = parseInt(room.terrain[index]) || 0;
+                }
             }
+            return {
+                ...room,
+                coords: roomNameToXY(room.roomName),
+                terrainArray,
+            };
+        });
+    }, [rooms]);
+
+    const mapBounds = useMemo(() => {
+        if (!parsedRooms.length) {
+            return {
+                minX: 0,
+                minY: 0,
+                maxX: 0,
+                maxY: 0,
+            };
         }
-        return terrainArray;
-    }, [terrain]);
+        const xs = parsedRooms.map((room) => room.coords.x);
+        const ys = parsedRooms.map((room) => room.coords.y);
+        return {
+            minX: Math.min(...xs),
+            minY: Math.min(...ys),
+            maxX: Math.max(...xs),
+            maxY: Math.max(...ys),
+        };
+    }, [parsedRooms]);
 
     useEffect(() => {
-        if (!canvasRef.current) return;
+        if (!canvasRef.current || !parsedRooms.length) {
+            if (appRef.current) {
+                appRef.current.destroy(true, { children: true, texture: true });
+                appRef.current = null;
+            }
+            return;
+        }
 
         // 创建 PixiJS 应用
         const app = new PIXI.Application();
         
         (async () => {
+            const margin = 40;
+            const mapWidth = (mapBounds.maxX - mapBounds.minX + 1) * ROOM_PX + margin * 2;
+            const mapHeight = (mapBounds.maxY - mapBounds.minY + 1) * ROOM_PX + margin * 2;
+
             await app.init({
-                width: 600,
-                height: 600,
+                width: Math.max(600, mapWidth),
+                height: Math.max(600, mapHeight),
                 backgroundColor: COLORS.BACKGROUND,
                 antialias: true,
                 resolution: window.devicePixelRatio || 1,
@@ -73,33 +141,33 @@ export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
             const mainContainer = new PIXI.Container();
             app.stage.addChild(mainContainer);
 
-            // 地图大小
-            const ROOM_SIZE = 50;
-            const TILE_SIZE = 10;
-
             // 绘制地形
             const terrainGraphics = new PIXI.Graphics();
             
-            for (let y = 0; y < ROOM_SIZE; y++) {
-                for (let x = 0; x < ROOM_SIZE; x++) {
-                    const terrainCode = parsedTerrain[y][x];
-                    
-                    let color = COLORS.PLAIN;
-                    if (terrainCode & TERRAIN_MASK_WALL) {
-                        color = COLORS.WALL;
-                    } else if (terrainCode & TERRAIN_MASK_SWAMP) {
-                        color = COLORS.SWAMP;
-                    }
+            parsedRooms.forEach((room) => {
+                const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + margin;
+                const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + margin;
 
-                    terrainGraphics.rect(
-                        x * TILE_SIZE + 50,
-                        y * TILE_SIZE + 50,
-                        TILE_SIZE,
-                        TILE_SIZE
-                    );
-                    terrainGraphics.fill(color);
+                for (let y = 0; y < ROOM_SIZE; y++) {
+                    for (let x = 0; x < ROOM_SIZE; x++) {
+                        const terrainCode = room.terrainArray[y][x];
+                        let color = COLORS.PLAIN;
+                        if (terrainCode & TERRAIN_MASK_WALL) {
+                            color = COLORS.WALL;
+                        } else if (terrainCode & TERRAIN_MASK_SWAMP) {
+                            color = COLORS.SWAMP;
+                        }
+
+                        terrainGraphics.rect(
+                            offsetX + x * TILE_SIZE,
+                            offsetY + y * TILE_SIZE,
+                            TILE_SIZE,
+                            TILE_SIZE
+                        );
+                        terrainGraphics.fill(color);
+                    }
                 }
-            }
+            });
 
             mainContainer.addChild(terrainGraphics);
 
@@ -107,40 +175,95 @@ export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
             const gridGraphics = new PIXI.Graphics();
             gridGraphics.setStrokeStyle({ width: 0.5, color: COLORS.GRID, alpha: 0.3 });
 
-            // 横线
-            for (let i = 0; i <= ROOM_SIZE; i++) {
-                gridGraphics.moveTo(50, i * TILE_SIZE + 50);
-                gridGraphics.lineTo(ROOM_SIZE * TILE_SIZE + 50, i * TILE_SIZE + 50);
-                gridGraphics.stroke();
-            }
+            parsedRooms.forEach((room) => {
+                const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + margin;
+                const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + margin;
 
-            // 竖线
-            for (let i = 0; i <= ROOM_SIZE; i++) {
-                gridGraphics.moveTo(i * TILE_SIZE + 50, 50);
-                gridGraphics.lineTo(i * TILE_SIZE + 50, ROOM_SIZE * TILE_SIZE + 50);
-                gridGraphics.stroke();
-            }
+                // 横线
+                for (let i = 0; i <= ROOM_SIZE; i++) {
+                    gridGraphics.moveTo(offsetX, offsetY + i * TILE_SIZE);
+                    gridGraphics.lineTo(offsetX + ROOM_PX, offsetY + i * TILE_SIZE);
+                    gridGraphics.stroke();
+                }
+
+                // 竖线
+                for (let i = 0; i <= ROOM_SIZE; i++) {
+                    gridGraphics.moveTo(offsetX + i * TILE_SIZE, offsetY);
+                    gridGraphics.lineTo(offsetX + i * TILE_SIZE, offsetY + ROOM_PX);
+                    gridGraphics.stroke();
+                }
+            });
 
             mainContainer.addChild(gridGraphics);
 
-            // 添加房间名称标签
-            const roomText = new PIXI.Text({
-                text: roomName,
-                style: {
-                    fontFamily: 'Arial',
-                    fontSize: 16,
-                    fill: 0xffffff,
-                    fontWeight: 'bold',
-                }
+            // 添加房间边框与标签
+            const roomBorder = new PIXI.Graphics();
+            roomBorder.setStrokeStyle({ width: 2, color: COLORS.ROOM_BORDER, alpha: 0.9 });
+            parsedRooms.forEach((room) => {
+                const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + margin;
+                const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + margin;
+                roomBorder.rect(offsetX, offsetY, ROOM_PX, ROOM_PX);
+                roomBorder.stroke();
+
+                const roomText = new PIXI.Text({
+                    text: room.roomName,
+                    style: {
+                        fontFamily: 'Arial',
+                        fontSize: 14,
+                        fill: 0xffffff,
+                        fontWeight: 'bold',
+                    },
+                });
+                roomText.x = offsetX + 6;
+                roomText.y = offsetY + 6;
+                mainContainer.addChild(roomText);
             });
-            roomText.x = 10;
-            roomText.y = 10;
-            app.stage.addChild(roomText);
+            mainContainer.addChild(roomBorder);
+
+            // 建筑渲染
+            const buildingContainer = new PIXI.Container();
+            buildings.forEach((building) => {
+                const targetRoom = parsedRooms.find((room) => room.roomName === building.roomName);
+                if (!targetRoom) return;
+                const offsetX = (targetRoom.coords.x - mapBounds.minX) * ROOM_PX + margin;
+                const offsetY = (targetRoom.coords.y - mapBounds.minY) * ROOM_PX + margin;
+                const centerX = offsetX + building.x * TILE_SIZE + TILE_SIZE / 2;
+                const centerY = offsetY + building.y * TILE_SIZE + TILE_SIZE / 2;
+
+                const graphic = new PIXI.Graphics();
+                const color = BUILDING_COLORS[building.type];
+                if (building.type === 'tower') {
+                    graphic.roundRect(-5, -5, 10, 10, 2);
+                } else if (building.type === 'extension') {
+                    graphic.rect(-4, -4, 8, 8);
+                } else {
+                    graphic.circle(0, 0, 5);
+                }
+                graphic.fill(color);
+                graphic.x = centerX;
+                graphic.y = centerY;
+                graphic.eventMode = 'static';
+                graphic.cursor = 'pointer';
+                graphic.on('pointertap', (event) => {
+                    event.stopPropagation();
+                    setSelectedBuilding(building);
+                    const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+                    const canvasRect = app.canvas.getBoundingClientRect();
+                    if (wrapperRect) {
+                        setTooltipPosition({
+                            x: event.global.x + canvasRect.left - wrapperRect.left,
+                            y: event.global.y + canvasRect.top - wrapperRect.top,
+                        });
+                    }
+                });
+                buildingContainer.addChild(graphic);
+            });
+            mainContainer.addChild(buildingContainer);
 
             // 添加图例
             const legendContainer = new PIXI.Container();
             legendContainer.x = 10;
-            legendContainer.y = ROOM_SIZE * TILE_SIZE + 70;
+            legendContainer.y = Math.max(10, app.screen.height - 30);
 
             const legendItems = [
                 { color: COLORS.PLAIN, label: '平原' },
@@ -176,11 +299,17 @@ export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
             let dragStart = { x: 0, y: 0 };
 
             app.canvas.style.cursor = 'grab';
+            app.stage.eventMode = 'static';
+            app.stage.hitArea = app.screen;
+            app.stage.on('pointertap', () => {
+                setSelectedBuilding(null);
+            });
 
             app.canvas.addEventListener('mousedown', (e) => {
                 isDragging = true;
                 dragStart = { x: e.clientX - mainContainer.x, y: e.clientY - mainContainer.y };
                 app.canvas.style.cursor = 'grabbing';
+                setSelectedBuilding(null);
             });
 
             app.canvas.addEventListener('mousemove', (e) => {
@@ -211,6 +340,7 @@ export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
                     mainContainer.scale.x = newScale;
                     mainContainer.scale.y = newScale;
                     setScale(newScale);
+                    setSelectedBuilding(null);
                 }
             });
 
@@ -222,10 +352,11 @@ export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
                 mainContainer.scale.y = 1;
                 setPosition({ x: 0, y: 0 });
                 setScale(1);
+                setSelectedBuilding(null);
             };
 
             // 将重置功能暴露给外部
-            (app as any).resetView = resetView;
+            resetViewRef.current = resetView;
         })();
 
         // 清理函数
@@ -235,12 +366,10 @@ export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
                 appRef.current = null;
             }
         };
-    }, [parsedTerrain, roomName]);
+    }, [buildings, mapBounds, parsedRooms]);
 
     const handleReset = () => {
-        if (appRef.current && (appRef.current as any).resetView) {
-            (appRef.current as any).resetView();
-        }
+        resetViewRef.current?.();
     };
 
     return (
@@ -258,11 +387,36 @@ export default function TerrainMap({ terrain, roomName }: TerrainMapProps) {
                 </button>
             </div>
             
-            <div 
-                ref={canvasRef} 
-                className="flex justify-center items-center bg-gray-900 rounded-lg overflow-hidden"
-                style={{ minHeight: '600px' }}
-            />
+            <div className="relative">
+                <div 
+                    ref={wrapperRef}
+                    className="flex justify-center items-center bg-gray-900 rounded-lg overflow-hidden border border-gray-700"
+                    style={{ minHeight: '600px' }}
+                >
+                    <div ref={canvasRef} />
+                </div>
+                {selectedBuilding && (
+                    <div
+                        className="absolute z-10 min-w-[180px] rounded-lg border border-blue-500/50 bg-gray-900/95 p-3 text-xs text-gray-200 shadow-lg backdrop-blur"
+                        style={{ left: tooltipPosition.x + 12, top: tooltipPosition.y + 12 }}
+                    >
+                        <div className="mb-1 text-sm font-semibold text-white">
+                            {BUILDING_LABELS[selectedBuilding.type]}
+                        </div>
+                        <div className="text-gray-400">房间: {selectedBuilding.roomName}</div>
+                        <div className="text-gray-400">坐标: ({selectedBuilding.x}, {selectedBuilding.y})</div>
+                        {selectedBuilding.hp !== undefined && (
+                            <div className="text-gray-400">耐久: {selectedBuilding.hp}</div>
+                        )}
+                        <button
+                            onClick={() => setSelectedBuilding(null)}
+                            className="mt-2 text-blue-300 hover:text-blue-200"
+                        >
+                            关闭
+                        </button>
+                    </div>
+                )}
+            </div>
             
             <div className="text-xs text-gray-500 text-center">
                 💡 提示: 使用鼠标拖拽移动地图，滚轮缩放
