@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { getTerrainAction } from './actions';
 import { ScreepsShard } from '@/lib/constants';
-import TerrainMap, { Building, BuildingType, RoomTerrain } from '@/components/TerrainMap';
+import TerrainMap, { Building, BuildingType, RoomTerrain, ViewPosition } from '@/components/TerrainMap';
 import { roomNameToXY, xyToRoomName } from '@/lib/mapUtils';
 
 
@@ -13,6 +13,11 @@ export default function TerrainPage() {
     const [rooms, setRooms] = useState<RoomTerrain[]>([]);
     const [loading, setLoading] = useState(false);
     const [buildings, setBuildings] = useState<Building[]>([]);
+    const [viewScale, setViewScale] = useState(78.26);
+    const [viewPos, setViewPos] = useState<ViewPosition>({
+        x: 20.924,
+        y: 52.391,
+    });
     const [newBuilding, setNewBuilding] = useState({
         type: 'spawn' as BuildingType,
         roomName: room,
@@ -24,10 +29,9 @@ export default function TerrainPage() {
 
     const handleFetch = async () => {
         setLoading(true);
+        const radius = viewScale > 100 ? 1 : 2;
         const center = roomNameToXY(room);
-        const neighborRooms = [-1, 0, 1].flatMap((dx) =>
-            [-1, 0, 1].map((dy) => xyToRoomName(center.x + dx, center.y + dy))
-        );
+        const neighborRooms = createRoomGrid(center.x, center.y, radius);
         const results = await Promise.all(
             neighborRooms.map((name) => getTerrainAction(name, shard))
         );
@@ -50,6 +54,10 @@ export default function TerrainPage() {
         } else {
             setNewBuilding((prev) => ({ ...prev, roomName: '' }));
         }
+        setViewPos({
+            x: center.x + 0.5,
+            y: center.y + 0.5,
+        });
         if (errors.length) {
             alert(`部分房间加载失败:\n${errors.join('\n')}`);
         }
@@ -60,18 +68,20 @@ export default function TerrainPage() {
     const handleDemo = () => {
         const centerRoom = 'W0N0';
         const center = roomNameToXY(centerRoom);
-        const demoRooms: RoomTerrain[] = [-1, 0, 1].flatMap((dx) =>
-            [-1, 0, 1].map((dy) => ({
-                roomName: xyToRoomName(center.x + dx, center.y + dy),
-                terrain: generateDemoTerrain(),
-            }))
-        );
+        const demoRooms: RoomTerrain[] = createRoomGrid(center.x, center.y, 2).map((name) => ({
+            roomName: name,
+            terrain: generateDemoTerrain(),
+        }));
         setRooms(demoRooms);
         setRoom(centerRoom);
         setNewBuilding((prev) => ({
             ...prev,
             roomName: centerRoom,
         }));
+        setViewPos({
+            x: center.x + 0.5,
+            y: center.y + 0.5,
+        });
         setBuildings([
             {
                 id: 'demo-spawn',
@@ -105,6 +115,11 @@ export default function TerrainPage() {
                 y: clampCoordinate(newBuilding.y),
             },
         ]);
+    };
+
+    const handleViewChange = (position: ViewPosition, scale: number) => {
+        setViewPos(position);
+        setViewScale(scale);
     };
 
     return (
@@ -247,10 +262,64 @@ export default function TerrainPage() {
                     </div>
                 </div>
 
+                <div className="rounded-2xl border border-gray-800 bg-gray-900/70 p-5 shadow-lg backdrop-blur">
+                    <div className="flex flex-wrap items-end gap-4">
+                        <div className="min-w-[160px] flex-1">
+                            <label className="block text-sm font-medium mb-2">pos.x</label>
+                            <input
+                                type="number"
+                                step="0.001"
+                                value={viewPos.x}
+                                onChange={(e) =>
+                                    setViewPos((prev) => ({
+                                        ...prev,
+                                        x: Number(e.target.value),
+                                    }))
+                                }
+                                className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div className="min-w-[160px] flex-1">
+                            <label className="block text-sm font-medium mb-2">pos.y</label>
+                            <input
+                                type="number"
+                                step="0.001"
+                                value={viewPos.y}
+                                onChange={(e) =>
+                                    setViewPos((prev) => ({
+                                        ...prev,
+                                        y: Number(e.target.value),
+                                    }))
+                                }
+                                className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div className="min-w-[160px] flex-1">
+                            <label className="block text-sm font-medium mb-2">scale</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                value={viewScale}
+                                onChange={(e) => setViewScale(Number(e.target.value))}
+                                className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div className="text-xs text-gray-400 max-w-[260px]">
+                            scale &gt; 100 显示房间细节，scale ≤ 100 显示绿点概览
+                        </div>
+                    </div>
+                </div>
+
                 {/* 地形地图显示区域 */}
                 <div className="bg-gray-900/80 rounded-2xl border border-gray-800 p-4 shadow-lg">
                     {rooms.length ? (
-                        <TerrainMap rooms={rooms} buildings={buildings} />
+                        <TerrainMap
+                            rooms={rooms}
+                            buildings={buildings}
+                            viewScale={viewScale}
+                            viewPos={viewPos}
+                            onViewChange={handleViewChange}
+                        />
                     ) : (
                         <div className="flex items-center justify-center h-96 text-gray-400">
                             <div className="text-center">
@@ -291,4 +360,14 @@ function generateDemoTerrain() {
 function clampCoordinate(value: number) {
     if (Number.isNaN(value)) return 0;
     return Math.min(49, Math.max(0, value));
+}
+
+function createRoomGrid(centerX: number, centerY: number, radius: number) {
+    const rooms: string[] = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+            rooms.push(xyToRoomName(centerX + dx, centerY + dy));
+        }
+    }
+    return rooms;
 }

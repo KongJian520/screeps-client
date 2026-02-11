@@ -1,12 +1,17 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { ROOM_PX, ROOM_SIZE, TILE_SIZE, roomNameToXY } from '@/lib/mapUtils';
 
 export interface RoomTerrain {
     roomName: string;
     terrain: string;
+}
+
+export interface ViewPosition {
+    x: number;
+    y: number;
 }
 
 export type BuildingType = 'spawn' | 'tower' | 'extension';
@@ -23,6 +28,9 @@ export interface Building {
 interface TerrainMapProps {
     rooms: RoomTerrain[];
     buildings: Building[];
+    viewScale: number;
+    viewPos: ViewPosition;
+    onViewChange?: (position: ViewPosition, scale: number) => void;
 }
 
 // 地形类型常量
@@ -40,6 +48,9 @@ const COLORS = {
 };
 
 const LEGEND_BOTTOM_OFFSET = 30;
+const MARGIN = 40;
+const MIN_SCALE = 30;
+const MAX_SCALE = 300;
 
 const BUILDING_COLORS: Record<BuildingType, number> = {
     spawn: 0xf4d35e,
@@ -58,15 +69,18 @@ const BUILDING_LABELS: Record<BuildingType, string> = {
  * 使用 PixiJS 渲染 Screeps 地形数据
  * 使用 React 缓存机制优化性能
  */
-export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
+export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onViewChange }: TerrainMapProps) {
     const canvasRef = useRef<HTMLDivElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<PIXI.Application | null>(null);
     const resetViewRef = useRef<(() => void) | null>(null);
-    const [scale, setScale] = useState(1);
-    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const mainContainerRef = useRef<PIXI.Container | null>(null);
+    const viewPosRef = useRef<ViewPosition>(viewPos);
+    const viewScaleRef = useRef(viewScale);
     const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+    const detailMode = viewScale > 100;
+    const activeBuilding = detailMode ? selectedBuilding : null;
 
     // 使用 useMemo 缓存解析后的地形数据
     const parsedRooms = useMemo(() => {
@@ -106,6 +120,41 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
         };
     }, [parsedRooms]);
 
+    const applyView = useCallback((scaleValue: number, position: ViewPosition) => {
+        const app = appRef.current;
+        const container = mainContainerRef.current;
+        if (!app || !container) return;
+        const clampedScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scaleValue));
+        const scaleRatio = clampedScale / 100;
+        const targetX = (position.x - mapBounds.minX) * ROOM_PX + MARGIN;
+        const targetY = (position.y - mapBounds.minY) * ROOM_PX + MARGIN;
+        container.scale.set(scaleRatio);
+        container.x = app.screen.width / 2 - targetX * scaleRatio;
+        container.y = app.screen.height / 2 - targetY * scaleRatio;
+    }, [mapBounds.minX, mapBounds.minY]);
+
+    const updateViewFromContainer = useCallback(() => {
+        const app = appRef.current;
+        const container = mainContainerRef.current;
+        if (!app || !container) return;
+        const scaleRatio = container.scale.x;
+        const centerX = app.screen.width / 2;
+        const centerY = app.screen.height / 2;
+        const posX = (centerX - container.x) / (ROOM_PX * scaleRatio) + mapBounds.minX - MARGIN / ROOM_PX;
+        const posY = (centerY - container.y) / (ROOM_PX * scaleRatio) + mapBounds.minY - MARGIN / ROOM_PX;
+        const nextPos = {
+            x: Number(posX.toFixed(3)),
+            y: Number(posY.toFixed(3)),
+        };
+        const nextScale = Number((scaleRatio * 100).toFixed(2));
+        onViewChange?.(nextPos, nextScale);
+    }, [mapBounds.minX, mapBounds.minY, onViewChange]);
+
+    useEffect(() => {
+        viewPosRef.current = viewPos;
+        viewScaleRef.current = viewScale;
+    }, [viewPos, viewScale]);
+
     useEffect(() => {
         if (!canvasRef.current || !parsedRooms.length) {
             if (appRef.current) {
@@ -119,9 +168,8 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
         const app = new PIXI.Application();
         
         (async () => {
-            const margin = 40;
-            const mapWidth = (mapBounds.maxX - mapBounds.minX + 1) * ROOM_PX + margin * 2;
-            const mapHeight = (mapBounds.maxY - mapBounds.minY + 1) * ROOM_PX + margin * 2;
+            const mapWidth = (mapBounds.maxX - mapBounds.minX + 1) * ROOM_PX + MARGIN * 2;
+            const mapHeight = (mapBounds.maxY - mapBounds.minY + 1) * ROOM_PX + MARGIN * 2;
 
             await app.init({
                 width: Math.max(600, mapWidth),
@@ -142,159 +190,160 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
             // 创建主容器
             const mainContainer = new PIXI.Container();
             app.stage.addChild(mainContainer);
+            mainContainerRef.current = mainContainer;
 
-            // 绘制地形
-            const terrainGraphics = new PIXI.Graphics();
-            
-            parsedRooms.forEach((room) => {
-                const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + margin;
-                const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + margin;
+            if (detailMode) {
+                const terrainGraphics = new PIXI.Graphics();
+                parsedRooms.forEach((room) => {
+                    const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + MARGIN;
+                    const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + MARGIN;
 
-                for (let y = 0; y < ROOM_SIZE; y++) {
-                    for (let x = 0; x < ROOM_SIZE; x++) {
-                        const terrainCode = room.terrainArray[y][x];
-                        let color = COLORS.PLAIN;
-                        if (terrainCode & TERRAIN_MASK_WALL) {
-                            color = COLORS.WALL;
-                        } else if (terrainCode & TERRAIN_MASK_SWAMP) {
-                            color = COLORS.SWAMP;
+                    for (let y = 0; y < ROOM_SIZE; y++) {
+                        for (let x = 0; x < ROOM_SIZE; x++) {
+                            const terrainCode = room.terrainArray[y][x];
+                            let color = COLORS.PLAIN;
+                            if (terrainCode & TERRAIN_MASK_WALL) {
+                                color = COLORS.WALL;
+                            } else if (terrainCode & TERRAIN_MASK_SWAMP) {
+                                color = COLORS.SWAMP;
+                            }
+
+                            terrainGraphics.rect(
+                                offsetX + x * TILE_SIZE,
+                                offsetY + y * TILE_SIZE,
+                                TILE_SIZE,
+                                TILE_SIZE
+                            );
+                            terrainGraphics.fill(color);
                         }
-
-                        terrainGraphics.rect(
-                            offsetX + x * TILE_SIZE,
-                            offsetY + y * TILE_SIZE,
-                            TILE_SIZE,
-                            TILE_SIZE
-                        );
-                        terrainGraphics.fill(color);
-                    }
-                }
-            });
-
-            mainContainer.addChild(terrainGraphics);
-
-            // 绘制网格
-            const gridGraphics = new PIXI.Graphics();
-            gridGraphics.setStrokeStyle({ width: 0.5, color: COLORS.GRID, alpha: 0.3 });
-
-            parsedRooms.forEach((room) => {
-                const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + margin;
-                const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + margin;
-
-                // 横线
-                for (let i = 0; i <= ROOM_SIZE; i++) {
-                    gridGraphics.moveTo(offsetX, offsetY + i * TILE_SIZE);
-                    gridGraphics.lineTo(offsetX + ROOM_PX, offsetY + i * TILE_SIZE);
-                    gridGraphics.stroke();
-                }
-
-                // 竖线
-                for (let i = 0; i <= ROOM_SIZE; i++) {
-                    gridGraphics.moveTo(offsetX + i * TILE_SIZE, offsetY);
-                    gridGraphics.lineTo(offsetX + i * TILE_SIZE, offsetY + ROOM_PX);
-                    gridGraphics.stroke();
-                }
-            });
-
-            mainContainer.addChild(gridGraphics);
-
-            // 添加房间边框与标签
-            const roomBorder = new PIXI.Graphics();
-            roomBorder.setStrokeStyle({ width: 2, color: COLORS.ROOM_BORDER, alpha: 0.9 });
-            parsedRooms.forEach((room) => {
-                const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + margin;
-                const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + margin;
-                roomBorder.rect(offsetX, offsetY, ROOM_PX, ROOM_PX);
-                roomBorder.stroke();
-
-                const roomText = new PIXI.Text({
-                    text: room.roomName,
-                    style: {
-                        fontFamily: 'Arial',
-                        fontSize: 14,
-                        fill: 0xffffff,
-                        fontWeight: 'bold',
-                    },
-                });
-                roomText.x = offsetX + 6;
-                roomText.y = offsetY + 6;
-                mainContainer.addChild(roomText);
-            });
-            mainContainer.addChild(roomBorder);
-
-            // 建筑渲染
-            const buildingContainer = new PIXI.Container();
-            buildings.forEach((building) => {
-                const targetRoom = parsedRooms.find((room) => room.roomName === building.roomName);
-                if (!targetRoom) return;
-                const offsetX = (targetRoom.coords.x - mapBounds.minX) * ROOM_PX + margin;
-                const offsetY = (targetRoom.coords.y - mapBounds.minY) * ROOM_PX + margin;
-                const centerX = offsetX + building.x * TILE_SIZE + TILE_SIZE / 2;
-                const centerY = offsetY + building.y * TILE_SIZE + TILE_SIZE / 2;
-
-                const graphic = new PIXI.Graphics();
-                const color = BUILDING_COLORS[building.type];
-                if (building.type === 'tower') {
-                    graphic.roundRect(-5, -5, 10, 10, 2);
-                } else if (building.type === 'extension') {
-                    graphic.rect(-4, -4, 8, 8);
-                } else {
-                    graphic.circle(0, 0, 5);
-                }
-                graphic.fill(color);
-                graphic.x = centerX;
-                graphic.y = centerY;
-                graphic.eventMode = 'static';
-                graphic.cursor = 'pointer';
-                graphic.on('pointertap', (event) => {
-                    event.stopPropagation();
-                    setSelectedBuilding(building);
-                    const wrapperRect = wrapperRef.current?.getBoundingClientRect();
-                    const canvasRect = app.canvas.getBoundingClientRect();
-                    if (wrapperRect) {
-                        setTooltipPosition({
-                            x: event.global.x + canvasRect.left - wrapperRect.left,
-                            y: event.global.y + canvasRect.top - wrapperRect.top,
-                        });
                     }
                 });
-                buildingContainer.addChild(graphic);
-            });
-            mainContainer.addChild(buildingContainer);
+                mainContainer.addChild(terrainGraphics);
 
-            // 添加图例
-            const legendContainer = new PIXI.Container();
-            legendContainer.x = 10;
-            legendContainer.y = Math.max(10, app.screen.height - LEGEND_BOTTOM_OFFSET);
+                const gridGraphics = new PIXI.Graphics();
+                gridGraphics.setStrokeStyle({ width: 0.5, color: COLORS.GRID, alpha: 0.3 });
+                parsedRooms.forEach((room) => {
+                    const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + MARGIN;
+                    const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + MARGIN;
 
-            const legendItems = [
-                { color: COLORS.PLAIN, label: '平原' },
-                { color: COLORS.WALL, label: '墙壁' },
-                { color: COLORS.SWAMP, label: '沼泽' },
-            ];
+                    for (let i = 0; i <= ROOM_SIZE; i++) {
+                        gridGraphics.moveTo(offsetX, offsetY + i * TILE_SIZE);
+                        gridGraphics.lineTo(offsetX + ROOM_PX, offsetY + i * TILE_SIZE);
+                        gridGraphics.stroke();
+                    }
 
-            legendItems.forEach((item, index) => {
-                const box = new PIXI.Graphics();
-                box.rect(0, 0, 15, 15);
-                box.fill(item.color);
-                box.x = index * 80;
-                
-                const text = new PIXI.Text({
-                    text: item.label,
-                    style: {
-                        fontFamily: 'Arial',
-                        fontSize: 12,
-                        fill: 0xffffff,
+                    for (let i = 0; i <= ROOM_SIZE; i++) {
+                        gridGraphics.moveTo(offsetX + i * TILE_SIZE, offsetY);
+                        gridGraphics.lineTo(offsetX + i * TILE_SIZE, offsetY + ROOM_PX);
+                        gridGraphics.stroke();
                     }
                 });
-                text.x = index * 80 + 20;
-                text.y = 0;
-                
-                legendContainer.addChild(box);
-                legendContainer.addChild(text);
-            });
+                mainContainer.addChild(gridGraphics);
 
-            app.stage.addChild(legendContainer);
+                const roomBorder = new PIXI.Graphics();
+                roomBorder.setStrokeStyle({ width: 2, color: COLORS.ROOM_BORDER, alpha: 0.9 });
+                parsedRooms.forEach((room) => {
+                    const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + MARGIN;
+                    const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + MARGIN;
+                    roomBorder.rect(offsetX, offsetY, ROOM_PX, ROOM_PX);
+                    roomBorder.stroke();
+
+                    const roomText = new PIXI.Text({
+                        text: room.roomName,
+                        style: {
+                            fontFamily: 'Arial',
+                            fontSize: 14,
+                            fill: 0xffffff,
+                            fontWeight: 'bold',
+                        },
+                    });
+                    roomText.x = offsetX + 6;
+                    roomText.y = offsetY + 6;
+                    mainContainer.addChild(roomText);
+                });
+                mainContainer.addChild(roomBorder);
+
+                const buildingContainer = new PIXI.Container();
+                buildings.forEach((building) => {
+                    const targetRoom = parsedRooms.find((room) => room.roomName === building.roomName);
+                    if (!targetRoom) return;
+                    const offsetX = (targetRoom.coords.x - mapBounds.minX) * ROOM_PX + MARGIN;
+                    const offsetY = (targetRoom.coords.y - mapBounds.minY) * ROOM_PX + MARGIN;
+                    const centerX = offsetX + building.x * TILE_SIZE + TILE_SIZE / 2;
+                    const centerY = offsetY + building.y * TILE_SIZE + TILE_SIZE / 2;
+
+                    const graphic = new PIXI.Graphics();
+                    const color = BUILDING_COLORS[building.type];
+                    if (building.type === 'tower') {
+                        graphic.roundRect(-5, -5, 10, 10, 2);
+                    } else if (building.type === 'extension') {
+                        graphic.rect(-4, -4, 8, 8);
+                    } else {
+                        graphic.circle(0, 0, 5);
+                    }
+                    graphic.fill(color);
+                    graphic.x = centerX;
+                    graphic.y = centerY;
+                    graphic.eventMode = 'static';
+                    graphic.cursor = 'pointer';
+                    graphic.on('pointertap', (event) => {
+                        event.stopPropagation();
+                        setSelectedBuilding(building);
+                        const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+                        const canvasRect = app.canvas.getBoundingClientRect();
+                        if (wrapperRect) {
+                            setTooltipPosition({
+                                x: event.global.x + canvasRect.left - wrapperRect.left,
+                                y: event.global.y + canvasRect.top - wrapperRect.top,
+                            });
+                        }
+                    });
+                    buildingContainer.addChild(graphic);
+                });
+                mainContainer.addChild(buildingContainer);
+
+                const legendContainer = new PIXI.Container();
+                legendContainer.x = 10;
+                legendContainer.y = Math.max(10, app.screen.height - LEGEND_BOTTOM_OFFSET);
+
+                const legendItems = [
+                    { color: COLORS.PLAIN, label: '平原' },
+                    { color: COLORS.WALL, label: '墙壁' },
+                    { color: COLORS.SWAMP, label: '沼泽' },
+                ];
+
+                legendItems.forEach((item, index) => {
+                    const box = new PIXI.Graphics();
+                    box.rect(0, 0, 15, 15);
+                    box.fill(item.color);
+                    box.x = index * 80;
+                    
+                    const text = new PIXI.Text({
+                        text: item.label,
+                        style: {
+                            fontFamily: 'Arial',
+                            fontSize: 12,
+                            fill: 0xffffff,
+                        }
+                    });
+                    text.x = index * 80 + 20;
+                    text.y = 0;
+                    
+                    legendContainer.addChild(box);
+                    legendContainer.addChild(text);
+                });
+
+                app.stage.addChild(legendContainer);
+            } else {
+                const overviewGraphics = new PIXI.Graphics();
+                parsedRooms.forEach((room) => {
+                    const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + MARGIN;
+                    const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + MARGIN;
+                    overviewGraphics.circle(offsetX + ROOM_PX / 2, offsetY + ROOM_PX / 2, 6);
+                    overviewGraphics.fill(0x3ddc84);
+                });
+                mainContainer.addChild(overviewGraphics);
+            }
 
             // 交互功能：缩放和平移
             let isDragging = false;
@@ -318,7 +367,7 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
                 if (isDragging) {
                     mainContainer.x = e.clientX - dragStart.x;
                     mainContainer.y = e.clientY - dragStart.y;
-                    setPosition({ x: mainContainer.x, y: mainContainer.y });
+                    updateViewFromContainer();
                 }
             });
 
@@ -338,27 +387,24 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
                 const delta = e.deltaY > 0 ? 0.9 : 1.1;
                 const newScale = mainContainer.scale.x * delta;
                 
-                if (newScale >= 0.5 && newScale <= 3) {
-                    mainContainer.scale.x = newScale;
-                    mainContainer.scale.y = newScale;
-                    setScale(newScale);
+                if (newScale >= MIN_SCALE / 100 && newScale <= MAX_SCALE / 100) {
+                    mainContainer.scale.set(newScale);
+                    updateViewFromContainer();
                     setSelectedBuilding(null);
                 }
             });
 
             // 重置按钮功能
             const resetView = () => {
-                mainContainer.x = 0;
-                mainContainer.y = 0;
-                mainContainer.scale.x = 1;
-                mainContainer.scale.y = 1;
-                setPosition({ x: 0, y: 0 });
-                setScale(1);
+                applyView(100, viewPosRef.current);
+                onViewChange?.(viewPosRef.current, 100);
                 setSelectedBuilding(null);
             };
 
             // 将重置功能暴露给外部
             resetViewRef.current = resetView;
+
+            applyView(viewScaleRef.current, viewPosRef.current);
         })();
 
         // 清理函数
@@ -366,9 +412,14 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
             if (appRef.current) {
                 appRef.current.destroy(true, { children: true, texture: true });
                 appRef.current = null;
+                mainContainerRef.current = null;
             }
         };
-    }, [buildings, mapBounds, parsedRooms]);
+    }, [applyView, buildings, detailMode, mapBounds, onViewChange, parsedRooms, updateViewFromContainer]);
+
+    useEffect(() => {
+        applyView(viewScale, viewPos);
+    }, [applyView, mapBounds, viewPos, viewScale]);
 
     const handleReset = () => {
         resetViewRef.current?.();
@@ -378,8 +429,8 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
         <div className="space-y-4">
             <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-400">
-                    <span className="mr-4">缩放: {(scale * 100).toFixed(0)}%</span>
-                    <span>位置: ({position.x.toFixed(0)}, {position.y.toFixed(0)})</span>
+                    <span className="mr-4">缩放: {viewScale.toFixed(2)}%</span>
+                    <span>视野: ({viewPos.x.toFixed(3)}, {viewPos.y.toFixed(3)})</span>
                 </div>
                 <button
                     onClick={handleReset}
@@ -397,18 +448,18 @@ export default function TerrainMap({ rooms, buildings }: TerrainMapProps) {
                 >
                     <div ref={canvasRef} />
                 </div>
-                {selectedBuilding && (
+                {activeBuilding && (
                     <div
                         className="absolute z-10 min-w-[180px] rounded-lg border border-blue-500/50 bg-gray-900/95 p-3 text-xs text-gray-200 shadow-lg backdrop-blur"
                         style={{ left: tooltipPosition.x + 12, top: tooltipPosition.y + 12 }}
                     >
                         <div className="mb-1 text-sm font-semibold text-white">
-                            {BUILDING_LABELS[selectedBuilding.type]}
+                            {BUILDING_LABELS[activeBuilding.type]}
                         </div>
-                        <div className="text-gray-400">房间: {selectedBuilding.roomName}</div>
-                        <div className="text-gray-400">坐标: ({selectedBuilding.x}, {selectedBuilding.y})</div>
-                        {selectedBuilding.hp !== undefined && (
-                            <div className="text-gray-400">耐久: {selectedBuilding.hp}</div>
+                        <div className="text-gray-400">房间: {activeBuilding.roomName}</div>
+                        <div className="text-gray-400">坐标: ({activeBuilding.x}, {activeBuilding.y})</div>
+                        {activeBuilding.hp !== undefined && (
+                            <div className="text-gray-400">耐久: {activeBuilding.hp}</div>
                         )}
                         <button
                             onClick={() => setSelectedBuilding(null)}
