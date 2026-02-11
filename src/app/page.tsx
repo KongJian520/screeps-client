@@ -23,6 +23,33 @@ export default function TerrainPage() {
         setLoading(false);
     };
 
+    // 演示功能：生成模拟地形数据
+    const handleDemo = () => {
+        // 生成一个 50x50 的随机地形
+        let demoTerrain = '';
+        for (let y = 0; y < 50; y++) {
+            for (let x = 0; x < 50; x++) {
+                // 边界是墙壁
+                if (x === 0 || x === 49 || y === 0 || y === 49) {
+                    demoTerrain += '1';
+                }
+                // 随机生成地形
+                else {
+                    const rand = Math.random();
+                    if (rand < 0.1) {
+                        demoTerrain += '1'; // 10% 墙壁
+                    } else if (rand < 0.25) {
+                        demoTerrain += '2'; // 15% 沼泽
+                    } else {
+                        demoTerrain += '0'; // 75% 平原
+                    }
+                }
+            }
+        }
+        setTerrain(demoTerrain);
+        setRoom('DEMO');
+    };
+
     return (
         <div className="min-h-screen bg-gray-900 text-white p-6">
             <div className="max-w-7xl mx-auto">
@@ -66,6 +93,13 @@ export default function TerrainPage() {
                             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md font-medium transition-colors"
                         >
                             {loading ? '加载中...' : '获取地形'}
+                        </button>
+                        
+                        <button
+                            onClick={handleDemo}
+                            className="px-6 py-2 bg-green-600 hover:bg-green-700 rounded-md font-medium transition-colors"
+                        >
+                            🎮 演示模式
                         </button>
                     </div>
                 </div>
