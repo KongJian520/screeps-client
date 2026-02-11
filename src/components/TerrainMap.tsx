@@ -83,9 +83,9 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
     const canvasRef = useRef<HTMLDivElement>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<PIXI.Application | null>(null);
-    const resetViewRef = useRef<(() => void) | null>(null);
     const mainContainerRef = useRef<PIXI.Container | null>(null);
     const viewStateRef = useRef({ position: viewPos, scale: viewScale });
+    const resizeHandlerRef = useRef<(() => void) | null>(null);
     const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
     const detailMode = viewScale > DETAIL_MODE_THRESHOLD;
@@ -196,21 +196,30 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
             return;
         }
 
+        let shouldDispose = false;
         // 创建 PixiJS 应用
         const app = new PIXI.Application();
+        const wrapper = wrapperRef.current;
+        const measuredWidth = wrapper?.clientWidth ?? 0;
+        const measuredHeight = wrapper?.clientHeight ?? 0;
+        const initialWidth = measuredWidth > 0 ? measuredWidth : window.innerWidth;
+        const initialHeight = measuredHeight > 0 ? measuredHeight : window.innerHeight;
+        const needsResize = measuredWidth === 0 || measuredHeight === 0;
         
         (async () => {
-            const mapWidth = (mapBounds.maxX - mapBounds.minX + 1) * ROOM_PX + MARGIN * 2;
-            const mapHeight = (mapBounds.maxY - mapBounds.minY + 1) * ROOM_PX + MARGIN * 2;
-
             await app.init({
-                width: Math.max(600, mapWidth),
-                height: Math.max(600, mapHeight),
+                width: initialWidth,
+                height: initialHeight,
                 backgroundColor: COLORS.BACKGROUND,
                 antialias: true,
                 resolution: window.devicePixelRatio || 1,
                 autoDensity: true,
             });
+
+            if (shouldDispose) {
+                app.destroy(true, { children: true, texture: true });
+                return;
+            }
 
             if (canvasRef.current) {
                 canvasRef.current.innerHTML = '';
@@ -223,7 +232,6 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
             const mainContainer = new PIXI.Container();
             app.stage.addChild(mainContainer);
             mainContainerRef.current = mainContainer;
-
             if (detailMode) {
                 const terrainGraphics = new PIXI.Graphics();
                 parsedRooms.forEach((room) => {
@@ -430,22 +438,31 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
                 }
             });
 
-            // 重置按钮功能
-            const resetView = () => {
-                const { position } = viewStateRef.current;
-                applyView(100, position);
-                onViewChange?.(position, 100);
-                setSelectedBuilding(null);
+            applyView(viewStateRef.current.scale, viewStateRef.current.position);
+
+            resizeHandlerRef.current = () => {
+                const wrapperElement = wrapperRef.current;
+                const nextWidth = wrapperElement?.clientWidth ?? window.innerWidth;
+                const nextHeight = wrapperElement?.clientHeight ?? window.innerHeight;
+                if (!app.renderer) return;
+                app.renderer.resize(nextWidth, nextHeight);
+                applyView(viewStateRef.current.scale, viewStateRef.current.position);
             };
 
-            // 将重置功能暴露给外部
-            resetViewRef.current = resetView;
+            window.addEventListener('resize', resizeHandlerRef.current);
 
-            applyView(viewStateRef.current.scale, viewStateRef.current.position);
+            if (needsResize) {
+                requestAnimationFrame(() => resizeHandlerRef.current?.());
+            }
         })();
 
         // 清理函数
         return () => {
+            shouldDispose = true;
+            if (resizeHandlerRef.current) {
+                window.removeEventListener('resize', resizeHandlerRef.current);
+                resizeHandlerRef.current = null;
+            }
             if (appRef.current) {
                 appRef.current.destroy(true, { children: true, texture: true });
                 appRef.current = null;
@@ -458,59 +475,35 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
         applyView(viewScale, viewPos);
     }, [applyView, mapBounds, viewPos, viewScale]);
 
-    const handleReset = () => {
-        resetViewRef.current?.();
-    };
-
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-400">
-                    <span className="mr-4">缩放: {viewScale.toFixed(2)}</span>
-                    <span>视野: ({viewPos.x.toFixed(2)}, {viewPos.y.toFixed(2)})</span>
-                </div>
-                <button
-                    onClick={handleReset}
-                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-md text-sm transition-colors"
-                >
-                    重置视图
-                </button>
+        <div className="absolute inset-0">
+            <div 
+                ref={wrapperRef}
+                className="absolute inset-0"
+            >
+                <div ref={canvasRef} className="h-full w-full" />
             </div>
-            
-            <div className="relative">
-                <div 
-                    ref={wrapperRef}
-                    className="flex justify-center items-center bg-gray-900 rounded-lg overflow-hidden border border-gray-700"
-                    style={{ minHeight: '600px' }}
+            {activeBuilding && (
+                <div
+                    className="absolute z-10 min-w-[180px] rounded-lg border border-blue-500/50 bg-gray-900/95 p-3 text-xs text-gray-200 shadow-lg backdrop-blur"
+                    style={{ left: tooltipPosition.x + 12, top: tooltipPosition.y + 12 }}
                 >
-                    <div ref={canvasRef} />
-                </div>
-                {activeBuilding && (
-                    <div
-                        className="absolute z-10 min-w-[180px] rounded-lg border border-blue-500/50 bg-gray-900/95 p-3 text-xs text-gray-200 shadow-lg backdrop-blur"
-                        style={{ left: tooltipPosition.x + 12, top: tooltipPosition.y + 12 }}
-                    >
-                        <div className="mb-1 text-sm font-semibold text-white">
-                            {BUILDING_LABELS[activeBuilding.type]}
-                        </div>
-                        <div className="text-gray-400">房间: {activeBuilding.roomName}</div>
-                        <div className="text-gray-400">坐标: ({activeBuilding.x}, {activeBuilding.y})</div>
-                        {activeBuilding.hp !== undefined && (
-                            <div className="text-gray-400">耐久: {activeBuilding.hp}</div>
-                        )}
-                        <button
-                            onClick={() => setSelectedBuilding(null)}
-                            className="mt-2 text-blue-300 hover:text-blue-200"
-                        >
-                            关闭
-                        </button>
+                    <div className="mb-1 text-sm font-semibold text-white">
+                        {BUILDING_LABELS[activeBuilding.type]}
                     </div>
-                )}
-            </div>
-            
-            <div className="text-xs text-gray-500 text-center">
-                💡 提示: 使用鼠标拖拽移动地图，滚轮缩放
-            </div>
+                    <div className="text-gray-400">房间: {activeBuilding.roomName}</div>
+                    <div className="text-gray-400">坐标: ({activeBuilding.x}, {activeBuilding.y})</div>
+                    {activeBuilding.hp !== undefined && (
+                        <div className="text-gray-400">耐久: {activeBuilding.hp}</div>
+                    )}
+                    <button
+                        onClick={() => setSelectedBuilding(null)}
+                        className="mt-2 text-blue-300 hover:text-blue-200"
+                    >
+                        关闭
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

@@ -25,10 +25,9 @@ export default function TerrainPage() {
     const [loading, setLoading] = useState(false);
     const [buildings, setBuildings] = useState<Building[]>([]);
     const [viewScale, setViewScale] = useState(DEFAULT_VIEW_SCALE);
-    const [viewPos, setViewPos] = useState<ViewPosition>({
-        x: DEFAULT_VIEW_POS.x,
-        y: DEFAULT_VIEW_POS.y,
-    });
+    const [viewPos, setViewPos] = useState<ViewPosition>(DEFAULT_VIEW_POS);
+    // Tracks the initial center point for reset after loading a new map area.
+    const [initialViewPos, setInitialViewPos] = useState<ViewPosition>(DEFAULT_VIEW_POS);
     const [newBuilding, setNewBuilding] = useState({
         type: 'spawn' as BuildingType,
         roomName: room,
@@ -65,10 +64,9 @@ export default function TerrainPage() {
         } else {
             setNewBuilding((prev) => ({ ...prev, roomName: '' }));
         }
-        setViewPos({
-            x: center.x + 0.5,
-            y: center.y + 0.5,
-        });
+        const nextCenter = { x: center.x + 0.5, y: center.y + 0.5 };
+        setViewPos(nextCenter);
+        setInitialViewPos(nextCenter);
         if (errors.length) {
             alert(`部分房间加载失败:\n${errors.join('\n')}`);
         }
@@ -93,10 +91,9 @@ export default function TerrainPage() {
             ...prev,
             roomName: centerRoom,
         }));
-        setViewPos({
-            x: center.x + 0.5,
-            y: center.y + 0.5,
-        });
+        const nextCenter = { x: center.x + 0.5, y: center.y + 0.5 };
+        setViewPos(nextCenter);
+        setInitialViewPos(nextCenter);
         setBuildings([
             {
                 id: 'demo-spawn',
@@ -137,9 +134,24 @@ export default function TerrainPage() {
         setViewScale(scale);
     };
 
+    const handleResetView = () => {
+        setViewPos(initialViewPos);
+        setViewScale(100);
+    };
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-900 via-slate-900 to-gray-950 text-white p-6">
-            <div className="max-w-7xl mx-auto space-y-6">
+        <div className="relative min-h-screen overflow-y-auto overflow-x-auto text-white bg-gray-950">
+            {rooms.length > 0 && (
+                <TerrainMap
+                    rooms={rooms}
+                    buildings={buildings}
+                    viewScale={viewScale}
+                    viewPos={viewPos}
+                    onViewChange={handleViewChange}
+                />
+            )}
+            <div className="relative z-10 p-6 bg-gray-950/30">
+                <div className="max-w-7xl mx-auto space-y-6">
                 <div className="flex flex-col gap-2">
                     <h1 className="text-3xl font-bold">Screeps 全景地形 & 建筑面板</h1>
                     <p className="text-sm text-gray-400">
@@ -323,26 +335,31 @@ export default function TerrainPage() {
                     </div>
                 </div>
 
+                <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-gray-800 bg-gray-900/70 p-4 shadow-lg backdrop-blur">
+                    <div className="text-sm text-gray-300">
+                        <span className="mr-4">缩放: {viewScale.toFixed(2)}</span>
+                        <span>视野: ({viewPos.x.toFixed(2)}, {viewPos.y.toFixed(2)})</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-gray-400">
+                        <span>💡 使用鼠标拖拽移动地图，滚轮缩放</span>
+                        <button
+                            onClick={handleResetView}
+                            className="rounded-md border border-gray-700 bg-gray-800 px-3 py-1 text-sm text-gray-200 hover:bg-gray-700"
+                        >
+                            重置视图
+                        </button>
+                    </div>
+                </div>
+
                 {/* 地形地图显示区域 */}
-                <div className="bg-gray-900/80 rounded-2xl border border-gray-800 p-4 shadow-lg">
-                    {rooms.length ? (
-                        <TerrainMap
-                            rooms={rooms}
-                            buildings={buildings}
-                            viewScale={viewScale}
-                            viewPos={viewPos}
-                            onViewChange={handleViewChange}
-                        />
-                    ) : (
-                        <div className="flex items-center justify-center h-96 text-gray-400">
-                            <div className="text-center">
-                                <svg className="mx-auto h-12 w-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-                                </svg>
-                                <p className="text-lg">输入房间名称并点击“获取地形”按钮开始</p>
-                            </div>
-                        </div>
-                    )}
+                {rooms.length === 0 && (
+                    <div className="rounded-2xl border border-gray-800 bg-gray-900/70 p-10 text-center text-gray-400 shadow-lg backdrop-blur">
+                        <svg className="mx-auto h-12 w-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                        </svg>
+                        <p className="text-lg">输入房间名称并点击“获取地形”按钮开始</p>
+                    </div>
+                )}
                 </div>
             </div>
         </div>
