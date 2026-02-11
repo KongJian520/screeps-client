@@ -52,6 +52,15 @@ const MARGIN = 40;
 const MIN_SCALE = 30;
 const MAX_SCALE = 300;
 export const DETAIL_MODE_THRESHOLD = 100;
+const OVERVIEW_ROOM_RADIUS = 6;
+
+/**
+ * Round a number to a fixed decimal precision (e.g., roundToPrecision(1.2345, 2) -> 1.23).
+ */
+const roundToPrecision = (value: number, precision: number) => {
+    const factor = 10 ** precision;
+    return Math.round(value * factor) / factor;
+};
 
 const BUILDING_COLORS: Record<BuildingType, number> = {
     spawn: 0xf4d35e,
@@ -76,12 +85,15 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
     const appRef = useRef<PIXI.Application | null>(null);
     const resetViewRef = useRef<(() => void) | null>(null);
     const mainContainerRef = useRef<PIXI.Container | null>(null);
-    const viewPosRef = useRef<ViewPosition>(viewPos);
-    const viewScaleRef = useRef(viewScale);
+    const viewStateRef = useRef({ position: viewPos, scale: viewScale });
     const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
     const detailMode = viewScale > DETAIL_MODE_THRESHOLD;
     const activeBuilding = detailMode ? selectedBuilding : null;
+
+    useEffect(() => {
+        viewStateRef.current = { position: viewPos, scale: viewScale };
+    }, [viewPos, viewScale]);
 
     // 使用 useMemo 缓存解析后的地形数据
     const parsedRooms = useMemo(() => {
@@ -135,15 +147,23 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
     }, [mapBounds.minX, mapBounds.minY]);
 
     const convertScreenToRoomCoordinates = useCallback(
+        /**
+         * Convert screen center coordinates to room-space coordinates.
+         * @param centerX Screen center X coordinate in pixels.
+         * @param centerY Screen center Y coordinate in pixels.
+         * @param containerX Current container X offset in pixels.
+         * @param containerY Current container Y offset in pixels.
+         * @param scaleRatio Current container scale ratio.
+         */
         (centerX: number, centerY: number, containerX: number, containerY: number, scaleRatio: number) => {
-            // Screen center -> world pixels -> room coordinates (adjusted by map bounds and margin).
-            const posX =
-                (centerX - containerX) / (ROOM_PX * scaleRatio) + mapBounds.minX - MARGIN / ROOM_PX;
-            const posY =
-                (centerY - containerY) / (ROOM_PX * scaleRatio) + mapBounds.minY - MARGIN / ROOM_PX;
+            // Screen center -> world pixels -> room coordinates (removing margin offset in pixels).
+            const worldPixelX = (centerX - containerX) / scaleRatio - MARGIN;
+            const worldPixelY = (centerY - containerY) / scaleRatio - MARGIN;
+            const posX = worldPixelX / ROOM_PX + mapBounds.minX;
+            const posY = worldPixelY / ROOM_PX + mapBounds.minY;
             return {
-                x: Number(posX.toFixed(3)),
-                y: Number(posY.toFixed(3)),
+                x: roundToPrecision(posX, 2),
+                y: roundToPrecision(posY, 2),
             };
         },
         [mapBounds.minX, mapBounds.minY]
@@ -163,14 +183,9 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
             container.y,
             scaleRatio
         );
-        const nextScale = Number((scaleRatio * 100).toFixed(2));
+        const nextScale = roundToPrecision(scaleRatio * 100, 2);
         onViewChange?.(nextPos, nextScale);
     }, [convertScreenToRoomCoordinates, onViewChange]);
-
-    useEffect(() => {
-        viewPosRef.current = viewPos;
-        viewScaleRef.current = viewScale;
-    }, [viewPos, viewScale]);
 
     useEffect(() => {
         if (!canvasRef.current || !parsedRooms.length) {
@@ -356,7 +371,11 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
                 parsedRooms.forEach((room) => {
                     const offsetX = (room.coords.x - mapBounds.minX) * ROOM_PX + MARGIN;
                     const offsetY = (room.coords.y - mapBounds.minY) * ROOM_PX + MARGIN;
-                    overviewGraphics.circle(offsetX + ROOM_PX / 2, offsetY + ROOM_PX / 2, 6);
+                    overviewGraphics.circle(
+                        offsetX + ROOM_PX / 2,
+                        offsetY + ROOM_PX / 2,
+                        OVERVIEW_ROOM_RADIUS
+                    );
                     overviewGraphics.fill(0x3ddc84);
                 });
                 mainContainer.addChild(overviewGraphics);
@@ -413,15 +432,16 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
 
             // 重置按钮功能
             const resetView = () => {
-                applyView(100, viewPosRef.current);
-                onViewChange?.(viewPosRef.current, 100);
+                const { position } = viewStateRef.current;
+                applyView(100, position);
+                onViewChange?.(position, 100);
                 setSelectedBuilding(null);
             };
 
             // 将重置功能暴露给外部
             resetViewRef.current = resetView;
 
-            applyView(viewScaleRef.current, viewPosRef.current);
+            applyView(viewStateRef.current.scale, viewStateRef.current.position);
         })();
 
         // 清理函数
@@ -446,8 +466,8 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
         <div className="space-y-4">
             <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-400">
-                    <span className="mr-4">缩放: {viewScale.toFixed(2)}%</span>
-                    <span>视野: ({viewPos.x.toFixed(3)}, {viewPos.y.toFixed(3)})</span>
+                    <span className="mr-4">缩放: {viewScale.toFixed(2)}</span>
+                    <span>视野: ({viewPos.x.toFixed(2)}, {viewPos.y.toFixed(2)})</span>
                 </div>
                 <button
                     onClick={handleReset}

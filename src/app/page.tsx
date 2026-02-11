@@ -12,8 +12,10 @@ import TerrainMap, {
 } from '@/components/TerrainMap';
 import { roomNameToXY, xyToRoomName } from '@/lib/mapUtils';
 
+// Defaults align with the Screeps map2 URL example: https://screeps.com/a/#!/map2/shard3?pos=20.924,52.391&scale=78.26 (scale taken from the example zoom).
 const DEFAULT_VIEW_POS = { x: 20.924, y: 52.391 };
 const DEFAULT_VIEW_SCALE = 78.26;
+const SCALE_HINT = `scale > ${DETAIL_MODE_THRESHOLD} 显示房间细节，scale ≤ ${DETAIL_MODE_THRESHOLD} 显示绿点概览`;
 
 
 export default function TerrainPage() {
@@ -38,7 +40,7 @@ export default function TerrainPage() {
 
     const handleFetch = async () => {
         setLoading(true);
-        const radius = viewScale > 100 ? 1 : 2;
+        const radius = getRoomRadiusForScale(viewScale);
         const center = roomNameToXY(room);
         const neighborRooms = createRoomGrid(center.x, center.y, radius);
         const results = await Promise.all(
@@ -77,7 +79,11 @@ export default function TerrainPage() {
     const handleDemo = () => {
         const centerRoom = 'W0N0';
         const center = roomNameToXY(centerRoom);
-        const demoRooms: RoomTerrain[] = createRoomGrid(center.x, center.y, 2).map((name) => ({
+        const demoRooms: RoomTerrain[] = createRoomGrid(
+            center.x,
+            center.y,
+            getRoomRadiusForScale(DEFAULT_VIEW_SCALE)
+        ).map((name) => ({
             roomName: name,
             terrain: generateDemoTerrain(),
         }));
@@ -277,7 +283,7 @@ export default function TerrainPage() {
                             <label className="block text-sm font-medium mb-2">pos.x</label>
                             <input
                                 type="number"
-                                step="0.001"
+                                step="0.01"
                                 value={viewPos.x}
                                 onChange={(e) =>
                                     setViewPos((prev) => ({
@@ -292,7 +298,7 @@ export default function TerrainPage() {
                             <label className="block text-sm font-medium mb-2">pos.y</label>
                             <input
                                 type="number"
-                                step="0.001"
+                                step="0.01"
                                 value={viewPos.y}
                                 onChange={(e) =>
                                     setViewPos((prev) => ({
@@ -313,9 +319,7 @@ export default function TerrainPage() {
                                 className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                         </div>
-                        <div className="text-xs text-gray-400 max-w-[260px]">
-                            scale &gt; {DETAIL_MODE_THRESHOLD} 显示房间细节，scale ≤ {DETAIL_MODE_THRESHOLD} 显示绿点概览
-                        </div>
+                        <div className="text-xs text-gray-400 max-w-[260px]">{SCALE_HINT}</div>
                     </div>
                 </div>
 
@@ -371,6 +375,9 @@ function clampCoordinate(value: number) {
     return Math.min(49, Math.max(0, value));
 }
 
+/**
+ * Creates a square grid of room names centered on the given coordinates.
+ */
 function createRoomGrid(centerX: number, centerY: number, radius: number) {
     const rooms: string[] = [];
     for (let dx = -radius; dx <= radius; dx++) {
@@ -379,4 +386,8 @@ function createRoomGrid(centerX: number, centerY: number, radius: number) {
         }
     }
     return rooms;
+}
+
+function getRoomRadiusForScale(scale: number) {
+    return scale > DETAIL_MODE_THRESHOLD ? 1 : 2;
 }
