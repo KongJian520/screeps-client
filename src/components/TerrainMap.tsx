@@ -51,6 +51,7 @@ const LEGEND_BOTTOM_OFFSET = 30;
 const MARGIN = 40;
 const MIN_SCALE = 30;
 const MAX_SCALE = 300;
+export const DETAIL_MODE_THRESHOLD = 100;
 
 const BUILDING_COLORS: Record<BuildingType, number> = {
     spawn: 0xf4d35e,
@@ -79,7 +80,7 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
     const viewScaleRef = useRef(viewScale);
     const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-    const detailMode = viewScale > 100;
+    const detailMode = viewScale > DETAIL_MODE_THRESHOLD;
     const activeBuilding = detailMode ? selectedBuilding : null;
 
     // 使用 useMemo 缓存解析后的地形数据
@@ -133,6 +134,21 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
         container.y = app.screen.height / 2 - targetY * scaleRatio;
     }, [mapBounds.minX, mapBounds.minY]);
 
+    const convertScreenToRoomCoordinates = useCallback(
+        (centerX: number, centerY: number, containerX: number, containerY: number, scaleRatio: number) => {
+            // Screen center -> world pixels -> room coordinates (adjusted by map bounds and margin).
+            const posX =
+                (centerX - containerX) / (ROOM_PX * scaleRatio) + mapBounds.minX - MARGIN / ROOM_PX;
+            const posY =
+                (centerY - containerY) / (ROOM_PX * scaleRatio) + mapBounds.minY - MARGIN / ROOM_PX;
+            return {
+                x: Number(posX.toFixed(3)),
+                y: Number(posY.toFixed(3)),
+            };
+        },
+        [mapBounds.minX, mapBounds.minY]
+    );
+
     const updateViewFromContainer = useCallback(() => {
         const app = appRef.current;
         const container = mainContainerRef.current;
@@ -140,15 +156,16 @@ export default function TerrainMap({ rooms, buildings, viewScale, viewPos, onVie
         const scaleRatio = container.scale.x;
         const centerX = app.screen.width / 2;
         const centerY = app.screen.height / 2;
-        const posX = (centerX - container.x) / (ROOM_PX * scaleRatio) + mapBounds.minX - MARGIN / ROOM_PX;
-        const posY = (centerY - container.y) / (ROOM_PX * scaleRatio) + mapBounds.minY - MARGIN / ROOM_PX;
-        const nextPos = {
-            x: Number(posX.toFixed(3)),
-            y: Number(posY.toFixed(3)),
-        };
+        const nextPos = convertScreenToRoomCoordinates(
+            centerX,
+            centerY,
+            container.x,
+            container.y,
+            scaleRatio
+        );
         const nextScale = Number((scaleRatio * 100).toFixed(2));
         onViewChange?.(nextPos, nextScale);
-    }, [mapBounds.minX, mapBounds.minY, onViewChange]);
+    }, [convertScreenToRoomCoordinates, onViewChange]);
 
     useEffect(() => {
         viewPosRef.current = viewPos;

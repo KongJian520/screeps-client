@@ -3,8 +3,17 @@
 import { useMemo, useState } from 'react';
 import { getTerrainAction } from './actions';
 import { ScreepsShard } from '@/lib/constants';
-import TerrainMap, { Building, BuildingType, RoomTerrain, ViewPosition } from '@/components/TerrainMap';
+import TerrainMap, {
+    Building,
+    BuildingType,
+    DETAIL_MODE_THRESHOLD,
+    RoomTerrain,
+    ViewPosition,
+} from '@/components/TerrainMap';
 import { roomNameToXY, xyToRoomName } from '@/lib/mapUtils';
+
+const DEFAULT_VIEW_POS = { x: 20.924, y: 52.391 };
+const DEFAULT_VIEW_SCALE = 78.26;
 
 
 export default function TerrainPage() {
@@ -13,10 +22,10 @@ export default function TerrainPage() {
     const [rooms, setRooms] = useState<RoomTerrain[]>([]);
     const [loading, setLoading] = useState(false);
     const [buildings, setBuildings] = useState<Building[]>([]);
-    const [viewScale, setViewScale] = useState(78.26);
+    const [viewScale, setViewScale] = useState(DEFAULT_VIEW_SCALE);
     const [viewPos, setViewPos] = useState<ViewPosition>({
-        x: 20.924,
-        y: 52.391,
+        x: DEFAULT_VIEW_POS.x,
+        y: DEFAULT_VIEW_POS.y,
     });
     const [newBuilding, setNewBuilding] = useState({
         type: 'spawn' as BuildingType,
@@ -305,7 +314,7 @@ export default function TerrainPage() {
                             />
                         </div>
                         <div className="text-xs text-gray-400 max-w-[260px]">
-                            scale &gt; 100 显示房间细节，scale ≤ 100 显示绿点概览
+                            scale &gt; {DETAIL_MODE_THRESHOLD} 显示房间细节，scale ≤ {DETAIL_MODE_THRESHOLD} 显示绿点概览
                         </div>
                     </div>
                 </div>
