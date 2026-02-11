@@ -19,7 +19,6 @@ export async function fetchRoomTerrain(room: string, shard: ScreepsShard) {
     // 1. 检查缓存
     const cached = terrainDb.getTerrain(shard, room);
     if (cached) {
-        console.log(`[Cache Hit] Room: ${room}, Shard: ${shard}`);
         return cached.terrain;
     }
 
@@ -28,7 +27,6 @@ export async function fetchRoomTerrain(room: string, shard: ScreepsShard) {
     const url = `https://screeps.com/api/game/room-terrain?room=${room}&shard=${shard}&encoded=1`;
 
     // 3. 发送带 Token 的请求
-    console.log(`[Network Request] Fetching Room: ${room} from ${shard}`);
     const response = await fetch(url, {
         method: 'GET',
         headers: {
